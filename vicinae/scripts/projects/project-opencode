@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# @vicinae.schemaVersion 1
+# @vicinae.title Project with OpenCode
+# @vicinae.mode compact
+# @vicinae.icon 🧠
+# @vicinae.keywords ["project","opencode","ai","agent"]
+# @vicinae.argument1 { "type": "text", "placeholder": "project name" }
+
+project="$1"
+dir="$HOME/dev/$project"
+
+if [[ ! -d "$dir" ]]; then
+  echo "Project not found: $project"
+  exit 1
+fi
+
+xdg-terminal-exec \
+  --title="OpenCode — $project" \
+  --dir="$dir" \
+  /usr/bin/zsh -ic 'opencode' \
+  >/dev/null 2>&1 &
+
+echo "Starting OpenCode in $project"

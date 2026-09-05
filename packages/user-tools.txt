@@ -1,0 +1,11 @@
+# User-level/runtime tooling
+
+uv
+fnm
+
+# Node-based CLI tools installed under fnm-managed Node
+codex
+opencode
+
+# Standalone user CLI
+claude

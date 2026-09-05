@@ -1,0 +1,186 @@
+# ---------- Oh My Zsh ----------
+export ZSH="$HOME/.oh-my-zsh"
+
+# ---------- Custom completions ----------
+fpath=("$HOME/.zfunc" $fpath)
+
+# Starship owns the prompt.
+ZSH_THEME=""
+
+DISABLE_AUTO_UPDATE="true"
+DISABLE_MAGIC_FUNCTIONS="true"
+ZSH_AUTOSUGGEST_MANUAL_REBIND=1
+
+plugins=(
+  git
+  zsh-syntax-highlighting
+  zsh-autosuggestions
+  history
+  dirhistory
+)
+
+source "$ZSH/oh-my-zsh.sh"
+
+
+# ---------- PATH ----------
+typeset -U PATH path
+
+path=(
+  "$HOME/.local/bin"
+  $path
+)
+
+
+# ---------- History ----------
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=32768
+SAVEHIST=32768
+
+setopt APPEND_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_SPACE
+
+
+# ---------- Node / fnm ----------
+FNM_PATH="$HOME/.local/share/fnm"
+
+if [[ -x "$FNM_PATH/fnm" ]]; then
+  path=("$FNM_PATH" $path)
+  eval "$("$FNM_PATH/fnm" env --shell zsh)"
+fi
+
+
+# ---------- zoxide ----------
+if command -v zoxide >/dev/null 2>&1; then
+  eval "$(zoxide init zsh)"
+
+  alias cd='zd'
+
+  zd() {
+    if (( $# == 0 )); then
+      builtin cd ~ || return
+    elif [[ -d "$1" ]]; then
+      builtin cd "$1" || return
+    else
+      if ! z "$@"; then
+        echo "Error: Directory not found"
+        return 1
+      fi
+
+      printf '󱞩 '
+      pwd
+    fi
+  }
+fi
+
+
+# ---------- Automatic project venv ----------
+autoload -Uz add-zsh-hook
+
+auto_venv() {
+  if [[ -n "$VIRTUAL_ENV" && "$PWD" != "${VIRTUAL_ENV:h}"* ]]; then
+    if (( $+functions[deactivate] )); then
+      deactivate
+    else
+      path=("${(@)path:#${VIRTUAL_ENV}/bin}")
+      unset VIRTUAL_ENV
+      rehash
+    fi
+  fi
+
+  [[ -n "$VIRTUAL_ENV" ]] && return
+
+  local dir="$PWD"
+
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/.venv/bin/activate" ]]; then
+      source "$dir/.venv/bin/activate"
+      return
+    fi
+
+    dir="${dir:h}"
+  done
+}
+
+add-zsh-hook chpwd auto_venv
+auto_venv
+
+
+# ---------- Files ----------
+if command -v eza >/dev/null 2>&1; then
+  alias ls='eza -lh --group-directories-first --icons=auto'
+  alias lsa='ls -a'
+  alias lt='eza --tree --level=2 --long --icons --git'
+  alias lta='lt -a'
+fi
+
+alias ff="fzf --preview 'bat --style=numbers --color=always {}'"
+
+sff() {
+  if (( $# == 0 )); then
+    echo "Usage: sff <destination> (e.g. sff host:/tmp/)"
+    return 1
+  fi
+
+  local file
+  file=$(find . -type f -printf '%T@\t%p\n' |
+    sort -rn |
+    cut -f2- |
+    ff) &&
+    [[ -n "$file" ]] &&
+    scp "$file" "$1"
+}
+
+
+# ---------- Open ----------
+open() {
+  xdg-open "$@" >/dev/null 2>&1 &
+}
+
+
+# ---------- Directory shortcuts ----------
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+
+
+# ---------- Tools ----------
+alias d='docker'
+
+
+# ---------- Git ----------
+alias g='git'
+alias gcm='git commit -m'
+alias gcam='git commit -a -m'
+alias gcad='git commit -a --amend'
+
+
+# ---------- fzf ----------
+if [[ -f /usr/share/doc/fzf/examples/completion.zsh ]]; then
+  source /usr/share/doc/fzf/examples/completion.zsh
+fi
+
+if [[ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]]; then
+  source /usr/share/doc/fzf/examples/key-bindings.zsh
+fi
+
+
+# ---------- Starship ----------
+eval "$(starship init zsh)"
+
+# ---------- Terminal presentation ----------
+export BAT_THEME=ansi
+
+if command -v col >/dev/null 2>&1 && command -v bat >/dev/null 2>&1; then
+  export MANROFFOPT="-c"
+  export MANPAGER="sh -c 'col -bx | bat -l man -p'"
+fi
+
+# ---------- AI agents ----------
+alias c='opencode'
+alias cx='claude'
+alias cy='codex'
+
+# Resume / continue
+alias cc='opencode --continue'
+alias cyr='codex resume --last'

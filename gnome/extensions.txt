@@ -1,0 +1,11 @@
+blur-my-shell@aunetx
+dynamic-music-pill@andbal
+freeby@kelvin.local
+gnome-compact-top-bar@metehan-arslan.github.io
+just-perfection-desktop@just-perfection
+kiwimenu@kemma
+restore-geometry@upsuper.org
+ubuntu-appindicators@ubuntu.com
+ubuntu-dock@ubuntu.com
+vicinae@dagimg-dot
+Vitals@CoreCoding.com

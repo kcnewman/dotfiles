@@ -1,0 +1,7 @@
+# User services
+vicinae.service: enabled
+
+# Docker: socket activated
+docker.service: disabled
+containerd.service: disabled
+docker.socket: enabled

@@ -1,0 +1,14 @@
+# Secrets
+*.key
+*.pem
+*.token
+.env
+.env.*
+
+# Temporary/editor files
+*~
+*.swp
+*.tmp
+
+# OS/editor state
+.DS_Store

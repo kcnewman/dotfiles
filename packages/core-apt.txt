@@ -1,0 +1,11 @@
+bat
+curl
+eza
+fd-find
+flatpak
+fzf
+git
+ripgrep
+starship
+zoxide
+zsh
