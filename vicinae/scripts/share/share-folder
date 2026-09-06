@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# @vicinae.schemaVersion 1
+# @vicinae.title Share Folder
+# @vicinae.mode compact
+# @vicinae.icon 📁
+# @vicinae.keywords ["share","folder","directory","send","localsend"]
+
+folder="$(
+    zenity \
+        --file-selection \
+        --directory \
+        --title="Share Folder"
+)" || exit 0
+
+[[ -d "$folder" ]] || exit 0
+
+nohup ptyxis \
+    --new-window \
+    --title="LocalSend Share" \
+    -- "$HOME/.local/bin/localsend-share" \
+    folder "$folder" \
+    >/dev/null 2>&1 &

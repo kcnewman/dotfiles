@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# @vicinae.schemaVersion 1
+# @vicinae.title Share File
+# @vicinae.mode compact
+# @vicinae.icon 📄
+# @vicinae.keywords ["share","file","send","localsend"]
+
+selection="$(
+    zenity \
+        --file-selection \
+        --multiple \
+        --separator=$'\n' \
+        --title="Share File"
+)" || exit 0
+
+[[ -n "$selection" ]] || exit 0
+
+mapfile -t files <<< "$selection"
+
+nohup ptyxis \
+    --new-window \
+    --title="LocalSend Share" \
+    -- "$HOME/.local/bin/localsend-share" \
+    file "${files[@]}" \
+    >/dev/null 2>&1 &

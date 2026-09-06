@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/localsend-share"
+mkdir -p "$cache"
+
+case "${1:-}" in
+    file)
+        shift
+
+        (($#)) || {
+            echo "No files selected."
+            sleep 2
+            exit 1
+        }
+
+        args=()
+
+        for file in "$@"; do
+            [[ -f "$file" ]] && args+=(-f "$file")
+        done
+
+        ((${#args[@]})) || {
+            echo "No valid files selected."
+            sleep 2
+            exit 1
+        }
+
+        /usr/local/bin/localsend-cli "${args[@]}"
+        ;;
+
+    folder)
+        folder="${2:-}"
+
+        [[ -d "$folder" ]] || {
+            echo "Folder not found."
+            sleep 2
+            exit 1
+        }
+
+        name="$(basename -- "$folder")"
+        parent="$(dirname -- "$folder")"
+
+        tmpdir="$(mktemp -d --tmpdir="$cache" localsend-folder.XXXXXX)"
+        archive="$tmpdir/$name.zip"
+
+        trap 'rm -rf -- "$tmpdir"' EXIT
+
+        echo
+        echo "Preparing: $name"
+        echo
+
+        (
+            cd "$parent" || exit 1
+            /usr/bin/zip -0 -q -r "$archive" "$name"
+        ) || {
+            echo "Failed to prepare folder."
+            sleep 2
+            exit 1
+        }
+
+        /usr/local/bin/localsend-cli -f "$archive"
+        ;;
+
+    clipboard)
+        types="$(wl-paste -l 2>/dev/null || true)"
+        tmpdir="$(mktemp -d --tmpdir="$cache" localsend-clipboard.XXXXXX)"
+
+        trap 'rm -rf -- "$tmpdir"' EXIT
+
+        if grep -qx 'image/png' <<< "$types"; then
+            file="$tmpdir/clipboard.png"
+            wl-paste --type image/png > "$file"
+
+        elif grep -qx 'image/jpeg' <<< "$types"; then
+            file="$tmpdir/clipboard.jpg"
+            wl-paste --type image/jpeg > "$file"
+
+        elif grep -q '^text/' <<< "$types"; then
+            file="$tmpdir/clipboard.txt"
+            wl-paste > "$file"
+
+        else
+            echo "Nothing shareable in clipboard."
+            sleep 2
+            exit 1
+        fi
+
+        [[ -s "$file" ]] || {
+            echo "Clipboard is empty."
+            sleep 2
+            exit 1
+        }
+
+        /usr/local/bin/localsend-cli -f "$file"
+        ;;
+
+    *)
+        echo "Usage: localsend-share {file|folder|clipboard}"
+        exit 2
+        ;;
+esac

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# @vicinae.schemaVersion 1
+# @vicinae.title Share Clipboard
+# @vicinae.mode compact
+# @vicinae.icon 📋
+# @vicinae.keywords ["share","clipboard","send","localsend"]
+
+if ! wl-paste -l 2>/dev/null | grep -qE '^(text/|image/)'; then
+    notify-send "LocalSend" "Nothing shareable in clipboard"
+    exit 1
+fi
+
+nohup ptyxis \
+    --new-window \
+    --title="LocalSend Share" \
+    -- "$HOME/.local/bin/localsend-share" \
+    clipboard \
+    >/dev/null 2>&1 &
