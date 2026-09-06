@@ -22,6 +22,13 @@ mkdir -p \
 cp "$ROOT/shell/zshrc" "$HOME/.zshrc"
 cp "$ROOT/starship/starship.toml" "$HOME/.config/starship.toml"
 
+if [[ -f "$ROOT/bin/localsend-share" ]]; then
+  cp "$ROOT/bin/localsend-share" \
+    "$HOME/.local/bin/localsend-share"
+
+  chmod +x "$HOME/.local/bin/localsend-share"
+fi
+
 # Ubuntu command-name compatibility
 if command -v batcat >/dev/null 2>&1; then
   ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
@@ -122,4 +129,46 @@ echo "Log out and back in for all GNOME changes to take effect."
 
 # Git defaults
 mkdir -p "$HOME/.config/git"
-cp "$REPO_DIR/git/config" "$HOME/.config/git/config"
+cp "$ROOT/git/config" "$HOME/.config/git/config"
+
+# ------------------------------------------------------------
+# Git
+# ------------------------------------------------------------
+
+mkdir -p "$HOME/.config/git"
+cp "$ROOT/git/config" "$HOME/.config/git/config"
+
+# ------------------------------------------------------------
+# Ptyxis
+# ------------------------------------------------------------
+
+mkdir -p "$HOME/.local/share/org.gnome.Ptyxis/palettes"
+
+if [[ -f "$ROOT/ptyxis/palettes/omarchy.palette" ]]; then
+  cp "$ROOT/ptyxis/palettes/omarchy.palette" \
+    "$HOME/.local/share/org.gnome.Ptyxis/palettes/omarchy.palette"
+fi
+
+# ------------------------------------------------------------
+# Application overrides
+# ------------------------------------------------------------
+
+mkdir -p "$HOME/.local/share/applications"
+
+if [[ -f "$ROOT/applications/org.localsend.localsend_app.desktop" ]]; then
+  cp "$ROOT/applications/org.localsend.localsend_app.desktop" \
+    "$HOME/.local/share/applications/"
+fi
+
+if [[ -f "$ROOT/applications/localsend_app.desktop" ]]; then
+  cp "$ROOT/applications/localsend_app.desktop" \
+    "$HOME/.local/share/applications/"
+fi
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "$HOME/.local/share/applications" || true
+fi
+
+echo
+echo "Configuration applied."
+echo "Log out and back in for all GNOME changes to take effect."

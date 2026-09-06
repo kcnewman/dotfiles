@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LocalSend
+GenericName=An open source cross-platform alternative to AirDrop
+Icon=/usr/share/icons/hicolor/256x256/apps/localsend_app.png
+Exec=localsend_app %U
+Categories=GTK;FileTransfer;Utility;
+Keywords=Sharing;LAN;Files;
+StartupNotify=true

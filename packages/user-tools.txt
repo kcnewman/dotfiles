@@ -9,3 +9,6 @@ opencode
 
 # Standalone user CLI
 claude
+
+# LocalSend
+localsend-cli  # official prebuilt binary in /usr/local/bin

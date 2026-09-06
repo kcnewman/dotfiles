@@ -4,6 +4,5 @@ com.mattjakeman.ExtensionManager
 com.spotify.Client
 it.mijorus.gearlever
 md.obsidian.Obsidian
-org.localsend.localsend_app
 org.ppsspp.PPSSPP
 org.telegram.desktop
