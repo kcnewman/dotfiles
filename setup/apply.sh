@@ -119,3 +119,7 @@ fi
 echo
 echo "Configuration applied."
 echo "Log out and back in for all GNOME changes to take effect."
+
+# Git defaults
+mkdir -p "$HOME/.config/git"
+cp "$REPO_DIR/git/config" "$HOME/.config/git/config"
