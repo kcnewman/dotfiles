@@ -185,3 +185,8 @@ alias cy='codex'
 alias cc='opencode --continue'
 alias cyr='codex resume --last'
 
+# Keep Codex's session file attributable to this pane, as Herdr's agent menu does.
+if [[ -n ${HC_TERMINAL_ID-} && -x "$HOME/.local/bin/herdr-resume" ]]; then
+  codex() { command codex --no-daemon "$@"; }
+  "$HOME/.local/bin/herdr-resume" restore
+fi

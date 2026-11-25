@@ -1,0 +1,10 @@
+[Unit]
+Description=Remember conversations in kept Herdr Desktop panes
+
+[Service]
+ExecStart=%h/.local/bin/herdr-resume watch
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target

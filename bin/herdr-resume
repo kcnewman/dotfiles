@@ -1,0 +1,380 @@
+#!/usr/bin/python3
+"""Reopen recorded agent conversations in their kept Herdr Desktop panes."""
+
+import argparse
+from contextlib import contextmanager
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+from tempfile import NamedTemporaryFile
+import time
+from typing import NamedTuple
+
+
+HOME_DIR = Path.home()
+STATE = Path(os.environ.get("XDG_STATE_HOME") or HOME_DIR / ".local/state")
+RECORDS = STATE / "herdr-desktop-resume"
+CORE = STATE / "herdr-core"
+RESUME = {
+    "claude": ("--resume",),
+    "codex": ("--no-daemon", "resume"),
+    "opencode": ("--session",),
+}
+UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+AMBIGUOUS = object()
+
+
+class Process(NamedTuple):
+    pid: int
+    name: str
+    parent: int
+    session: int
+    foreground: int
+    start: str
+
+    def marker(self):
+        return [self.pid, self.start]
+
+
+def process(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        name, stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)
+        fields = stat.split()
+        if fields[0] in {"Z", "X"}:
+            return None
+        return Process(pid, name.split("(", 1)[1], int(fields[1]), int(fields[3]), int(fields[5]), fields[19])
+    except (OSError, ValueError):
+        return None
+
+
+def alive(marker):
+    previous = process(marker[0]) if isinstance(marker, list) and marker else None
+    return previous is not None and previous.marker() == marker
+
+
+def descends(pid, ancestor):
+    while (current := process(pid)) and current.pid > 1:
+        if current.pid == ancestor.pid:
+            return current.start == ancestor.start
+        pid = current.parent
+    return False
+
+
+def load(path):
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def write(path, data):
+    with NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+        temp = Path(output.name)
+        try:
+            json.dump(data, output)
+            output.flush()
+            os.fsync(output.fileno())
+            temp.replace(path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+
+@contextmanager
+def locked():
+    RECORDS.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (RECORDS / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def core_directory():
+    name = os.environ.get("HC_SESSION") or "default"
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
+        raise ValueError("Invalid local Core session name")
+    return CORE / name
+
+
+def record_path(core, pane):
+    core_id = (load(core / "core.json") or {}).get("id", "")
+    if not re.fullmatch(r"[0-9a-f]{32}", core_id):
+        raise ValueError("No valid local Core instance")
+    if not re.fullmatch(r"t[0-9a-z]+", pane):
+        raise ValueError("No valid local pane address")
+    return RECORDS / f"{core_id}-{pane}.json"
+
+
+def terminal_process(terminal):
+    root = process(terminal.get("pid"))
+    if root is None or root.session != root.pid:
+        return None, None
+    try:
+        env = Path(f"/proc/{root.pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return None, None
+    if f"HC_TERMINAL_ID={terminal['address']}".encode() not in env:
+        return None, None
+    foreground = process(root.foreground)
+    if foreground and foreground.session == root.session:
+        return root, foreground
+    return root, None
+
+
+def valid_session(agent, session):
+    pattern = r"ses_[a-zA-Z0-9]+" if agent == "opencode" else UUID
+    return isinstance(session, str) and bool(re.fullmatch(pattern, session))
+
+
+def sqlite_read(path):
+    return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.2)
+
+
+def codex_meta(path):
+    try:
+        with open(path) as transcript:
+            meta = json.loads(transcript.readline(1024 * 1024))["payload"]
+        if (meta.get("originator") in {"codex-tui", "codex_cli_rs"}
+                and meta.get("source") in {"cli", "vscode"}
+                and meta.get("thread_source", "user") == "user"
+                and valid_session("codex", meta.get("id"))):
+            return meta["id"], meta["cwd"]
+    except (KeyError, OSError, ValueError, TypeError):
+        pass
+    return None
+
+
+def codex_saved(session):
+    if not valid_session("codex", session):
+        return None
+    with sqlite_read(HOME_DIR / ".codex/state_5.sqlite") as db:
+        row = db.execute("SELECT rollout_path FROM threads WHERE id=? AND archived=0", (session,)).fetchone()
+    metadata = codex_meta(row[0]) if row else None
+    return metadata if metadata and metadata[0] == session else None
+
+
+def codex_active(agent):
+    transcripts = set()
+    try:
+        fds = list(Path(f"/proc/{agent.pid}/fd").iterdir())
+    except FileNotFoundError:
+        return None
+    for fd in fds:
+        try:
+            target = os.readlink(fd)
+        except FileNotFoundError:
+            continue
+        if target.startswith("/") and Path(target).name.startswith("rollout-") and target.endswith(".jsonl"):
+            metadata = codex_meta(target)
+            if metadata:
+                transcripts.add(metadata)
+    # Codex keeps the previous thread's transcript open after /new or /resume.
+    if len(transcripts) > 1:
+        return AMBIGUOUS
+    return transcripts.pop() if transcripts else None
+
+
+def claude_active(agent):
+    metadata = load(HOME_DIR / f".claude/sessions/{agent.pid}.json")
+    if (metadata and metadata.get("pid") == agent.pid and metadata.get("procStart") == agent.start
+            and valid_session("claude", metadata.get("sessionId"))):
+        return metadata["sessionId"], metadata["cwd"]
+    return None
+
+
+def save_active(path, agent, identity, owner, shell, existing, **extra):
+    session, cwd = identity
+    if not isinstance(cwd, str) or not os.path.isabs(cwd) or not Path(cwd).is_dir():
+        return
+    # The pane shell instance separates a quit agent (same shell) from a lost pane (new shell).
+    record = dict(agent=agent, session=session, cwd=cwd, shell=shell.marker(), owner=owner.marker(), **extra)
+    if record != existing:
+        write(path, record)
+
+
+def is_shutting_down():
+    if Path("/run/systemd/shutdown/scheduled").exists():
+        return True
+    try:
+        status = subprocess.run(["/usr/bin/systemctl", "is-system-running"],
+                                capture_output=True, text=True, timeout=2).stdout.strip()
+        return status == "stopping"
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
+def scan():
+    for core in CORE.glob("*/"):
+        try:
+            record_path(core, "t0")
+        except ValueError:
+            continue
+        terminals = (load(core / "terminals.json") or {}).get("terminals", {})
+        for terminal in terminals.values():
+            if not terminal.get("keep"):
+                continue
+            path = record_path(core, terminal["address"])
+            record = load(path)
+            if terminal.get("state") == "finished" and terminal.get("reason") in {"exited", "killed"}:
+                # Only a pane closed while it held this record; a lost pane comes back as a new shell.
+                if record and (record.get("shell") or [None])[0] == terminal.get("pid") and not is_shutting_down():
+                    path.unlink(missing_ok=True)
+                continue
+            if terminal.get("state") != "live":
+                continue
+            root, foreground = terminal_process(terminal)
+            if not root:
+                continue
+            agent, identity = None, None
+            if foreground and foreground.name == "codex":
+                if record and record.get("via") == "hook" and record.get("owner") == foreground.marker():
+                    continue  # Codex's prompt hook named the chat last typed into.
+                agent, identity = "codex", codex_active(foreground)
+            elif foreground and foreground.name in {"claude", "claude-code"}:
+                agent, identity = "claude", claude_active(foreground)
+            if identity is AMBIGUOUS:
+                path.unlink(missing_ok=True)
+            elif identity:
+                save_active(path, agent, identity, foreground, root, record)
+            elif (record and record.get("shell") == root.marker() and not alive(record.get("owner"))
+                  and not is_shutting_down()):
+                path.unlink(missing_ok=True)
+
+
+def watch():
+    while True:
+        try:
+            with locked():
+                scan()
+        except (KeyError, OSError, ValueError, sqlite3.Error) as error:
+            print(f"herdr-resume: scan: {error}", file=sys.stderr, flush=True)
+        time.sleep(1)
+
+
+def opencode_location(session):
+    data = Path(os.environ.get("XDG_DATA_HOME") or HOME_DIR / ".local/share")
+    with sqlite_read(data / "opencode/opencode.db") as db:
+        row = db.execute(
+            "SELECT directory FROM session_v2 WHERE id=? AND parent_id IS NULL AND time_archived IS NULL",
+            (session,),
+        ).fetchone()
+    if not row:
+        raise ValueError("OpenCode conversation is unavailable in the local database")
+    return row[0]
+
+
+def active_terminal(core, pane):
+    terminals = (load(core / "terminals.json") or {}).get("terminals", {}).values()
+    terminal = next((t for t in terminals if t.get("address") == pane and t.get("keep") and t.get("state") == "live"), None)
+    return terminal_process(terminal) if terminal else (None, None)
+
+
+def restore(path):
+    shell = process(os.getppid())
+    # Only a kept pane's own shell restores; nested shells and tmux shells are skipped.
+    if (not sys.stdin.isatty() or not shell or shell.session != shell.pid
+            or (process(shell.parent) or shell).name != "herdr-core"):
+        return
+    record = load(path)
+    if not record or record.get("shell") == shell.marker():
+        return
+    # An agent orphaned by its lost pane can outlive its shell for a moment.
+    deadline = time.monotonic() + 5
+    while alive(record.get("owner")) and not alive(record.get("shell")) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if alive(record.get("owner")):
+        return
+    agent, session = record["agent"], record["session"]
+    if not valid_session(agent, session):
+        raise ValueError(f"Invalid saved {agent} session ID")
+    executable = shutil.which(agent)
+    if executable is None:
+        raise ValueError(f"{agent} is not on PATH")
+    executable = os.path.abspath(executable)
+    if agent == "opencode":
+        opencode_location(session)
+        # OpenCode TUIs starting together otherwise race to bind the same service port.
+        with (RECORDS / ".opencode-start.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            service = subprocess.run([executable, "service", "start"], capture_output=True, timeout=30)
+            if service.returncode:
+                raise ValueError("OpenCode's local service did not start")
+    with locked():
+        if load(path) != record:
+            return
+        for other in RECORDS.glob("*.json"):
+            saved = load(other) if other != path else None
+            if saved and (saved.get("agent"), saved.get("session")) == (agent, session) and alive(saved.get("owner")):
+                path.unlink()
+                raise ValueError(f"{agent} {session} is already open in another pane")
+        os.chdir(record["cwd"])
+        os.environ["PWD"] = os.getcwd()
+        # The exec keeps this PID, so quitting the agent before the recorder sees it still counts.
+        record.update(shell=shell.marker(), owner=process(os.getpid()).marker())
+        write(path, record)
+    os.execv(executable, [agent, *RESUME[agent], session])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    for action in ("watch", "restore", "list"):
+        commands.add_parser(action)
+    report = commands.add_parser("opencode")
+    report.add_argument("session")
+    report.add_argument("pid", type=int)
+    # Codex UserPromptSubmit hook: names the chat the user just typed into.
+    commands.add_parser("codex-hook")
+    args = parser.parse_args()
+    if args.action == "watch":
+        watch()
+        return
+    core = core_directory()
+    if args.action == "list":
+        prefix = record_path(core, "t0").stem.removesuffix("t0")
+        for path in sorted(RECORDS.glob(f"{prefix}*.json")):
+            record = load(path)
+            if record:
+                print(path.stem.removeprefix(prefix), record["agent"], record["session"], record["cwd"], sep="\t")
+        return
+    pane = os.environ.get("HC_TERMINAL_ID", "")
+    if args.action == "codex-hook" and not pane:
+        return
+    path = record_path(core, pane)
+    if args.action == "restore":
+        restore(path)
+        return
+    with locked():
+        root, owner = active_terminal(core, pane)
+        if args.action == "opencode" and valid_session("opencode", args.session):
+            reporter = process(args.pid)
+            if owner and reporter and owner.session == reporter.session and owner.name in {"opencode", "opencode-linux"}:
+                save_active(path, "opencode", (args.session, opencode_location(args.session)), owner, root, load(path))
+                return
+        if args.action == "codex-hook":
+            event = json.load(sys.stdin)
+            if not isinstance(event, dict):
+                return
+            transcript = Path(str(event.get("transcript_path") or "")).resolve()
+            identity = codex_meta(transcript) if transcript.is_relative_to(HOME_DIR / ".codex/sessions") else None
+            # A shared daemon runs hooks for every pane with the environment of the pane that started it.
+            if (owner and owner.name == "codex" and identity and identity[0] == event.get("session_id")
+                    and descends(os.getpid(), owner)
+                    and b"--no-daemon" in Path(f"/proc/{owner.pid}/cmdline").read_bytes().split(b"\0")):
+                save_active(path, "codex", identity, owner, root, load(path), via="hook")
+            return
+        raise ValueError("No exact agent session in the current kept pane")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
+        # Recording must never fail the user's Codex prompt.
+        sys.exit(0 if sys.argv[1:2] == ["codex-hook"] else f"herdr-resume: {error}")

@@ -169,6 +169,38 @@ if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$HOME/.local/share/applications" || true
 fi
 
+# ------------------------------------------------------------
+# Herdr Desktop reboot recovery
+# ------------------------------------------------------------
+
+cp "$ROOT/bin/herdr-resume" "$HOME/.local/bin/herdr-resume"
+chmod +x "$HOME/.local/bin/herdr-resume"
+
+mkdir -p "$HOME/.config/systemd/user" \
+  "$HOME/.config/opencode/herdr-desktop-resume"
+cp "$ROOT/systemd/herdr-resume.service" "$HOME/.config/systemd/user/"
+cp "$ROOT/opencode/cli.json" "$HOME/.config/opencode/cli.json"
+cp "$ROOT/opencode/herdr-desktop-resume/tui.js" \
+  "$HOME/.config/opencode/herdr-desktop-resume/tui.js"
+
+systemctl --user daemon-reload
+systemctl --user enable --now herdr-resume.service
+
+# Codex reports which chat each prompt goes to. Approve the hook once in Codex.
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path.home() / ".codex/hooks.json"
+hooks = json.loads(path.read_text()) if path.exists() else {"hooks": {}}
+entry = {"hooks": [{"type": "command", "command": f"{Path.home()}/.local/bin/herdr-resume codex-hook", "timeout": 5}]}
+prompts = hooks.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
+if entry not in prompts:
+    prompts.append(entry)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(hooks, indent=2) + "\n")
+PY
+
 echo
 echo "Configuration applied."
 echo "Log out and back in for all GNOME changes to take effect."

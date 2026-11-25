@@ -9,6 +9,7 @@ or caches.
 ## Included
 
 - Zsh configuration
+- Herdr Desktop reboot recovery
 - Starship prompt
 - Zed settings and keymaps
 - Vicinae script commands
@@ -175,6 +176,18 @@ Running a Docker command starts Docker and containerd when needed.
 
 Ollama is intentionally not installed.
 
+## Herdr Desktop Recovery
+
+After a reboot, kept Herdr panes come back as shells and reopen the Codex,
+Claude Code, or OpenCode conversation they were running, in the same folder.
+
+- `herdr-resume.service` records each pane's exact conversation
+- Codex reports the chat each prompt goes to through a `UserPromptSubmit`
+  hook; approve it once when Codex asks to review hooks
+- OpenCode reports its session through the `herdr-desktop-resume` TUI plugin
+- The Zsh block in `zshrc` reopens the saved conversation in a new pane shell
+- Agents you quit, and panes you close, stay closed
+
 ## Restore
 
 After cloning the repository and installing the required applications,
@@ -190,6 +203,8 @@ Some GNOME configuration changes may require logging out and back in.
 ## Repository Layout
 
     dotfiles/
+    ├── bin/
+    │   └── herdr-resume
     ├── gnome/
     │   ├── blur-my-shell.ini
     │   ├── compact-top-bar.ini
@@ -205,6 +220,9 @@ Some GNOME configuration changes may require logging out and back in.
     │   ├── shell-keybindings.ini
     │   ├── vitals.ini
     │   └── wm-preferences.ini
+    ├── opencode/
+    │   ├── cli.json
+    │   └── herdr-desktop-resume/
     ├── packages/
     │   ├── apt-manual.txt
     │   ├── core-apt.txt
@@ -216,6 +234,8 @@ Some GNOME configuration changes may require logging out and back in.
     │   └── zshrc
     ├── starship/
     │   └── starship.toml
+    ├── systemd/
+    │   └── herdr-resume.service
     ├── vicinae/
     │   └── scripts/
     └── zed/

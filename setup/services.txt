@@ -1,5 +1,6 @@
 # User services
 vicinae.service: enabled
+herdr-resume.service: enabled
 
 # Docker: socket activated
 docker.service: disabled
